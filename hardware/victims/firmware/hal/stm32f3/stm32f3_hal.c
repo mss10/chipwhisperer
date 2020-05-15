@@ -53,7 +53,7 @@ void platform_init(void)
 #if (PLATFORM==CWLITEARM)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   GPIO_InitTypeDef GpioInit;
-  GpioInit.Pin       = GPIO_PIN_13 | GPIO_PIN_14;
+  GpioInit.Pin       = GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
   GpioInit.Mode      = GPIO_MODE_OUTPUT_PP;
   GpioInit.Pull      = GPIO_NOPULL;
   GpioInit.Speed     = GPIO_SPEED_FREQ_HIGH;
@@ -61,6 +61,7 @@ void platform_init(void)
 
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, SET);
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, SET);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, SET);
 #endif
 }
 
@@ -138,6 +139,15 @@ void change_ok_led(int x)
      else
           HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, SET);
 }
+void trigger_LED15_high(void)
+{
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, SET);
+}
+
+void trigger_LED15_low(void)
+{
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_15, RESET);
+}
 #else
 void change_err_led(int x)
 {
@@ -146,4 +156,6 @@ void change_err_led(int x)
 void change_ok_led(int x)
 {
 }
+
+
 #endif //PLATFORM==CWLITEARM

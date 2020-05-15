@@ -33,7 +33,7 @@ from .simpleserial_readers.cwlite import SimpleSerial_ChipWhispererLite
 from chipwhisperer.common.utils import util
 from collections import OrderedDict
 from chipwhisperer.common.utils.util import camel_case_deprecated
-
+#import serial
 
 class SimpleSerial(TargetTemplate, util.DisableNewAttr):
     """SimpleSerial target object.
@@ -750,7 +750,6 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
             self.dis()
             raise e
 
-
     def simpleserial_wait_ack(self, timeout=500):
         """Waits for an ack from the target for timeout ms
 
@@ -833,7 +832,7 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
         Returns:
             The received payload as a bytearray or None if the read failed.
 
-        Example:
+        Example:simpleserial_read
             Reading ciphertext back from the target after a 'p' command::
 
                 ct = target.simpleserial_read('r', 16)
@@ -919,6 +918,84 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
             Added target.flush()
         """
         self.ser.flush()
+
+
+    #def read_usb(self, cmd, pay_len, end='\n', num_char=0, tout=250):
+        """ Reads data from the target via serial pipe.
+
+        Args:
+            num_char (int, optional): Number of byte to read. If 0, read all
+                data available. Defaults to 0.
+            timeout (int, optional): How long in ms to wait before returning.
+                If 0, block until data received. Defaults to 250.
+
+        Returns:
+            String of received data.
+        """
+        """if not self.connectStatus:
+            raise Warning("Target not connected. Cannot read from: " + dev_name)
+        ser = serial.Serial(dev_name, baud, timeout=tout)
+
+        cmd_len = len(cmd)
+        ascii_len = pay_len * 2
+        recv_len = cmd_len + ascii_len + len(end)
+        response = self.read(recv_len, timeout=timeout)
+
+        payload = bytearray(pay_len)
+        if cmd_len > 0:
+            if response[0:cmd_len] != cmd:
+                logging.warning("Unexpected start to command: {}".format(
+                    response[0:cmd_len]
+                ))
+                return None
+        idx = cmd_len
+        for i in range(0, pay_len):
+            try:
+                payload[i] = int(response[idx:(idx + 2)], 16)
+            except ValueError as e:
+                logging.warning("ValueError: {}".format(e))
+            idx += 2
+
+        if len(end) > 0:
+            if response[(idx):(idx + len(end))] != end:
+                logging.warning("Unexpected end to command: {}".format(
+                    response[(idx):(idx + len(end))]))
+                return None
+        #while True:
+        try:
+            data = ser.read(num_char)
+            return ser.read(num_char)
+        except USBError:
+            ser.close()
+            raise Warning("Error in target. It may have been disconnected")
+        except Exception as e:
+            ser.close()
+            raise e"""
+
+    #def write_usb(self, dev_name='/dev/ttyUSB0', baud=9600, data="", tout=250):
+        """ Writes data to the target via serial pipe.
+
+        Args:
+            data (str): Data to write over serial.
+
+        Raises:
+            Warning: Target not connected
+
+        .. versionadded:: 5.1
+            Added target.write()
+        """
+        """if not self.connectStatus:
+            raise Warning("Target not connected")
+        ser = serial.Serial(dev_name, baud, timeout=tout)
+
+        try:
+            ser.write(data.encode())
+        except USBError:
+            self.dis()
+            raise Warning("Error in target. It may have been disconnected")
+        except Exception as e:
+            self.dis()
+            raise e"""
 
 
 

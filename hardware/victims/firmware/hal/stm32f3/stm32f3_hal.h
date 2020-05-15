@@ -30,9 +30,12 @@ void trigger_low(void);
 void trigger_high(void);
 
 
+
 #if (PLATFORM==CWLITEARM)
 void change_err_led(int x);
 void change_ok_led(int x);
+void trigger_LED15_high(void);
+void trigger_LED15_low(void);
 #define led_error(X) (change_err_led(X))
 #define led_ok(X) (change_ok_led(X))
 #endif

@@ -304,6 +304,87 @@ def capture_trace(scope, target, plaintext, key=None, ack=True):
     else:
         return None
 
+def capture_ot(scope, target, plaintext=None, key=None, ack=True):
+    """Capture a trace, sending plaintext and key (optional)
+
+    Does all individual steps needed to capture a trace (arming the scope
+    sending the key/plaintext, getting the trace data back, etc.). Uses
+    target.output_len as the length of the expected target reponse for
+    simpleserial.
+
+    Args:
+        scope (ScopeTemplate): Scope object to use for capture.
+        target (TargetTemplate): Target object to read/write text from.
+        plaintext (bytearray): Plaintext to send to the target. Should be
+            unencoded bytearray (will be converted to SimpleSerial when it's
+            sent). If None, don't send plaintext.
+        key (bytearray, optional): Key to send to target. Should be unencoded
+            bytearray. If None, don't send key. Defaults to None.
+        ack (bool, optional): Check for ack when reading response from target.
+            Defaults to True.
+
+    Returns:
+        :class:`Trace <chipwhisperer.common.traces.Trace>` or None if capture
+        timed out.
+
+    Raises:
+        Warning or OSError: Error during capture.
+
+    Example:
+        Capturing a trace::
+
+            import chipwhisperer as cw
+            scope = cw.scope()
+            scope.default_setup()
+            target = cw.target()
+            ktp = cw.ktp.Basic()
+            key, pt = ktp.new_pair()
+            trace = cw.capture_trace(scope, target, pt, key)
+
+    .. versionadded:: 5.1
+        Added to simplify trace capture.
+
+    .. versionchanged:: 5.2
+        Added ack parameter and use of target.output_len
+    """
+
+    # First of all, the scope must be armed
+    scope.arm()
+
+    # if 'key' is present, propagate it
+    if key:
+        target.set_key(key, ack=ack)
+
+    # if 'plaintext' is present, propagate it
+    if plaintext:
+        target.simpleserial_write('p', plaintext)
+
+    # Capture some traces
+    # Note: Scope must be armed before capturing.
+    ret = scope.capture()
+
+    i = 0
+    while not target.is_done():
+        i += 1
+        time.sleep(0.05)
+        if i > 100:
+            warnings.warn("Target did not finish operation")
+            return None
+
+    #if ret:
+        #warnings.warn("Timeout happened during capture")
+        #return None
+    
+    response = None
+    response = target.simpleserial_read('r', target.output_len, ack=ack)
+
+    wave = scope.get_last_trace()
+
+    if len(wave) >= 1:
+        return Trace(wave, plaintext, response, key)
+    else:
+        return None
+
 
 captureTrace = camel_case_deprecated(capture_trace)
 

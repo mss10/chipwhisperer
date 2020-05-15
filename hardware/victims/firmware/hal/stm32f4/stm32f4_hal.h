@@ -13,6 +13,8 @@ char getch(void);
 void trigger_setup(void);
 void trigger_low(void);
 void trigger_high(void);
+void trigger_LED13_high(void);
+void trigger_LED13_low(void);
 
 void HW_AES128_Init(void);
 void HW_AES128_LoadKey(uint8_t* key);

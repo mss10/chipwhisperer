@@ -107,7 +107,7 @@ class HWInformation(util.DisableNewAttr):
         else:
             return False
 
-    def is_cwlite(self):
+    def default_setup(self):
         if self.vers is None:
             self.versions()
 
@@ -330,7 +330,7 @@ class TriggerSettings(util.DisableNewAttr):
         self.presamples_desired = 0
         self.presamples_actual = 0
         self.presampleTempMargin = 24
-        self._timeout = 2
+        self._timeout = 1
         self._stream_mode = False
         self._support_get_duration = True
         self._is_pro = False
@@ -1476,7 +1476,7 @@ class OpenADCInterface(object):
         self.settings()
         self._support_decimate = True
         self._nosampletimeout = 100
-        self._timeout = 2
+        self._timeout = 1
         self.presamples_desired = 0
         self.presamples_actual = 0
         self.presampleTempMargin = 24
