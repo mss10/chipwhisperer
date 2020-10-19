@@ -215,13 +215,13 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
             self.dis()
             raise e
 
-    def read(self, num_char = 0, timeout = 250):
+    def read(self, num_char = 0, **kwargs):
         """ Reads data from the target over serial.
 
         Args:
             num_char (int, optional): Number of byte to read. If 0, read all
                 data available. Defaults to 0.
-            timeout (int, optional): How long in ms to wait before returning.
+            **kwargs = timeout (int, optional): How long in ms to wait before returning.
                 If 0, block until data received. Defaults to 250.
 
         Returns:
@@ -235,7 +235,10 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
         try:
             if num_char == 0:
                 num_char = self.ser.inWaiting()
-            return self.ser.read(num_char, timeout)
+            if 'timeout' in kwargs:
+                return self.ser.read(num_char, int(kwargs['timeout']))
+            else:
+                return self.ser.read(num_char)
         except USBError:
             self.dis()
             raise Warning("Error in target. It may have been disconnected")
