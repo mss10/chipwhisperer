@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 #
-# Copyright (c) 2013-2020, NewAE Technology Inc
+# Copyright (c) 2013-2021, NewAE Technology Inc
 # All rights reserved.
 #
 # Find this and more at newae.com - this file is part of the chipwhisperer
@@ -9,18 +9,17 @@
 #
 #    This file is part of chipwhisperer.
 #
-#    chipwhisperer is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
 #
-#    chipwhisperer is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Lesser General Public License for more details.
+#       http://www.apache.org/licenses/LICENSE-2.0
 #
-#    You should have received a copy of the GNU General Public License
-#    along with chipwhisperer.  If not, see <http://www.gnu.org/licenses/>.
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
 #=================================================
 import binascii
 from ._base import TargetTemplate
@@ -28,6 +27,7 @@ from .simpleserial_readers.cwlite import SimpleSerial_ChipWhispererLite
 from ...common.utils import util
 from collections import OrderedDict
 from ...common.utils.util import camel_case_deprecated, dict_to_str
+import time
 
 from chipwhisperer.logging import *
 
@@ -45,6 +45,10 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
 
     The target is automatically connected to if the default configuration
     adequate.
+
+    A `noflush=True` kwarg may be used to suppress an initial protocol-specific
+    flush of the UART. The caller is then responsible for invoking flush() manually
+    to flush underlying buffers.
 
     For more help use the help() function with one of the submodules
     (target.baud, target.write, target.read, ...).
@@ -103,6 +107,10 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
         rtn['baud']     = self.baud
         rtn['simpleserial_last_read'] = self.simpleserial_last_read
         rtn['simpleserial_last_sent'] = self.simpleserial_last_sent
+        rtn['xonxoff'] = self.xonxoff
+        rtn['currently_xoff'] = self.currently_xoff
+        rtn['parity'] = self.parity
+        rtn['stop_bits'] = self.stop_bits
         #rtn['protver'] = self.protver
         return rtn
 
@@ -118,12 +126,45 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
 
     @property
     def output_len(self):
-        """The length of the output expected from the crypto algorithm (in bytes)"""
+        """The length of the output expected from the crypto algorithm (in bytes):
+        
+        :meta private:
+        
+        """
         return self._output_len
 
     @output_len.setter
     def output_len(self, length):
         self._output_len = length
+
+    @property
+    def parity(self):
+        if hasattr(self.ser, 'parity') and callable(self.ser.parity):
+            return self.ser.parity()
+        else:
+            raise AttributeError("Can't access parity")
+
+    @parity.setter
+    def parity(self, parity):
+        if hasattr(self.ser, 'parity') and callable(self.ser.parity):
+            return self.ser.setParity(parity)
+        else:
+            raise AttributeError("Can't access parity")
+
+    @property
+    def stop_bits(self):
+        if hasattr(self.ser, 'stopBits') and callable(self.ser.stopBits):
+            return self.ser.stopBits()
+        else:
+            raise AttributeError("Can't access parity")
+
+    @stop_bits.setter
+    def stop_bits(self, stop_bits):
+        if hasattr(self.ser, 'stopBits') and callable(self.ser.stopBits):
+            return self.ser.setStopBits(stop_bits)
+        else:
+            raise AttributeError("Can't access parity")
+        
 
     @property
     def baud(self):
@@ -152,29 +193,42 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
     @property
     def protver(self):
         """Get the protocol version used for the target
+
+        :meta private:
         """
         return self._proto_ver
 
     @protver.setter
     def protver(self, value):
         """Set the protocol version used for the target ('1.1', '1.0', or 'auto')
+
         """
         self._proto_ver = value
 
 
     def setConnection(self, con):
-        """I don't think this does anything"""
+        """I don't think this does anything
+        
+        :meta private:
+
+        """
         self.ser = con
         self.ser.connectStatus = self.connectStatus
         self.ser.selectionChanged()
 
-    def _con(self, scope = None):
+    def _con(self, scope = None, **kwargs):
         if not scope or not hasattr(scope, "qtadc"): Warning("You need a scope with OpenADC connected to use this Target")
 
         self.ser.con(scope)
-        # 'x' flushes everything & sets system back to idle
-        self.ser.write("xxxxxxxxxxxxxxxxxxxxxxxx")
-        self.ser.flush()
+
+        # Check to see if the caller wants to be responsible for flushing the
+        # UART on connect. For real world targets, we may just want to quietly
+        # open serial port without sending "xxx..." at a potentially incorrect
+        # baud rate.
+        if kwargs.get('noflush', False) == False:
+            # 'x' flushes everything & sets system back to idle
+            self.ser.write("xxxxxxxxxxxxxxxxxxxxxxxx")
+            self.ser.flush()
 
     def dis(self):
         self.close()
@@ -218,11 +272,13 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
 
 
 
-    def write(self, data):
+    def write(self, data, timeout=0):
         """ Writes data to the target over serial.
 
         Args:
             data (str): Data to write over serial.
+            timeout (float or None): Wait <timeout> seconds for write buffer to clear.
+                If None, block for a long time. If 0, return immediately. Defaults to 0.
 
         Raises:
             Warning: Target not connected
@@ -230,11 +286,14 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
         .. versionadded:: 5.1
             Added target.write()
         """
+        if type(data) is list:
+            data = bytearray(data)
         if not self.connectStatus:
             raise Warning("Target not connected")
 
         try:
-            self.ser.write(data)
+            self.ser.write(data, timeout)
+                    
         except Exception as e:
             self.dis()
             raise e
@@ -329,6 +388,8 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
         .. versionadded:: 5.1
             Added target.simpleserial_write()
         """
+        if type(num) is list:
+            num = bytearray(num)
         self.ser.flush()
         if cmd:
             cmd += binascii.hexlify(num).decode()
@@ -500,7 +561,7 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
         self._simpleserial_last_read = response
         return {'valid': valid, 'payload': payload, 'full_response': response, 'rv': rv}
 
-    def set_key(self, key, ack=True, timeout=250):
+    def set_key(self, key, ack=True, timeout=250, always_send=False):
         """Checks if key is different than the last one sent. If so, send it.
 
         Uses simpleserial_write('k')
@@ -518,7 +579,7 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
         .. versionadded:: 5.1
             Added target.set_key()
         """
-        if self.last_key != key:
+        if (self.last_key != key) or always_send:
             self.last_key = key
             self.simpleserial_write('k', key)
             if ack:
@@ -563,3 +624,16 @@ class SimpleSerial(TargetTemplate, util.DisableNewAttr):
             Added public method for in_waiting_tx().
         """
         return self.ser.inWaitingTX()
+
+    @property
+    def xonxoff(self):
+        # NOTE: Firmware version checked in lower serial driver
+        return self.ser.xonxoff
+    
+    @xonxoff.setter
+    def xonxoff(self, enable):
+        self.ser.xonxoff = enable
+
+    @property
+    def currently_xoff(self):
+        return self.ser.currently_xoff

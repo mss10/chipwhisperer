@@ -21,7 +21,7 @@
 import time
 import os.path
 # import chipwhisperer.capture.scopes._qt as openadc_qt
-from chipwhisperer.capture.scopes.cwhardware.ChipWhispererFWLoader import CWLite_Loader, CW1200_Loader, CWHusky_Loader
+from chipwhisperer.capture.scopes.cwhardware.ChipWhispererFWLoader import CWLite_Loader, CW1200_Loader, CWHusky_Loader, CWHuskyPlus_Loader
 from chipwhisperer.capture.scopes.cwhardware.ChipWhispererFWLoader import FWLoaderConfig
 from chipwhisperer.logging import *
 
@@ -31,11 +31,13 @@ from chipwhisperer.hardware.naeusb.programmer_avr import AVRISP
 from chipwhisperer.hardware.naeusb.programmer_xmega import XMEGAPDI
 from chipwhisperer.hardware.naeusb.programmer_stm32fserial import STM32FSerial
 from chipwhisperer.hardware.naeusb.serial import USART
+from ....common.utils.util import DisableNewAttr
 
-class OpenADCInterface_NAEUSBChip:
+class OpenADCInterface_NAEUSBChip(DisableNewAttr):
     _name = "NewAE USB (CWLite/CW1200)"
 
     def __init__(self):
+        super().__init__()
         self.ser = NAEUSB()
 
         self.fpga = FPGA(self.ser)
@@ -46,19 +48,20 @@ class OpenADCInterface_NAEUSBChip:
 
         self.scope = None
         self.last_id = None
+        self.registers = None
 
         self.cwFirmwareConfig = {
             0xACE2:FWLoaderConfig(CWLite_Loader()),
             0xACE3:FWLoaderConfig(CW1200_Loader()),
-            0xACE5:FWLoaderConfig(CWHusky_Loader())
+            0xACE5:FWLoaderConfig(CWHusky_Loader()),
+            0xACE6:FWLoaderConfig(CWHuskyPlus_Loader()),
         }
 
-    def con(self, sn=None, idProduct=None, bitstream=None, force=False, prog_speed=1E6, **kwargs):
-        # try:
+    def con(self, sn=None, idProduct=None, bitstream=None, force=False, prog_speed=1E6, registers=None, **kwargs):
         if idProduct:
             nae_products = [idProduct]
         else:
-            nae_products = [0xACE2, 0xACE3, 0xACE5]
+            nae_products = [0xACE2, 0xACE3, 0xACE5, 0xACE6]
         found_id = self.ser.con(idProduct=nae_products, serial_number=sn, **kwargs)
         if force:
             self.fpga.eraseFPGA()
@@ -70,6 +73,10 @@ class OpenADCInterface_NAEUSBChip:
         self.last_id = found_id
 
         self.getFWConfig().setInterface(self.fpga)
+        if not registers:
+            self.registers = self.getFWConfig().loader._registers
+        else:
+            self.registers = registers
 
         try:
             if bitstream is None:

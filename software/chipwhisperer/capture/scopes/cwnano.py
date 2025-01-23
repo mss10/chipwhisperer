@@ -2,28 +2,12 @@
 # HIGHLEVEL_CLASSLOAD_FAIL_FUNC_WARN
 # -*- coding: utf-8 -*-
 #
-# Copyright (c) 2013-2018, NewAE Technology Inc
+# Copyright (c) 2013-2022, NewAE Technology Inc
 # All rights reserved.
-#
-# Authors: Colin O'Flynn
 #
 # Find this and more at newae.com - this file is part of the chipwhisperer
 # project, http://www.github.com/newaetech/chipwhisperer
 #
-#    This file is part of chipwhisperer.
-#
-#    chipwhisperer is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    chipwhisperer is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Lesser General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with chipwhisperer.  If not, see <http://www.gnu.org/licenses/>.
 #=================================================
 import logging
 
@@ -34,6 +18,7 @@ from ...capture.scopes.openadc_interface.naeusbchip import OpenADCInterface_NAEU
 from ...common.utils import util
 from ...common.utils.util import dict_to_str
 from collections import OrderedDict
+from ...hardware.naeusb.serial import USART
 from .cwhardware.ChipWhispererSAM3Update import SAMFWLoader
 
 from ...hardware.naeusb.serial import USART
@@ -42,7 +27,7 @@ from ...hardware.naeusb.programmer_avr import AVRISP
 from ...hardware.naeusb.programmer_xmega import XMEGAPDI
 from ...hardware.naeusb.programmer_stm32fserial import STM32FSerial
 from ...common.utils.util import camel_case_deprecated, DelayedKeyboardInterrupt
-from ..api.cwcommon import ChipWhispererCommonInterface
+from ..api.cwcommon import ChipWhispererCommonInterface, ChipWhispererSAMErrors
 import time
 import datetime
 
@@ -54,6 +39,7 @@ class ADCSettings(util.DisableNewAttr):
 
 
     def __init__(self, usb):
+        super().__init__()
         self.usb = usb
         self.disable_newattr()
 
@@ -62,7 +48,7 @@ class ADCSettings(util.DisableNewAttr):
         rtn['clk_src'] = self.clk_src
         rtn['clk_freq'] = self.clk_freq
         rtn['samples'] = self.samples
-        return dict
+        return rtn
 
     def __repr__(self):
         return util.dict_to_str(self._dict_repr())
@@ -180,7 +166,7 @@ class GlitchSettings(util.DisableNewAttr):
         rtn = OrderedDict()
         rtn['repeat'] = self.repeat
         rtn['ext_offset'] = self.ext_offset
-        return dict
+        return rtn
 
     def __repr__(self):
         return util.dict_to_str(self._dict_repr())
@@ -542,16 +528,18 @@ class CWNano(util.DisableNewAttr, ChipWhispererCommonInterface):
     For more help about scope settings, try help() on each of the ChipWhisperer
     scope submodules (scope.adc, scope.io, scope.glitch):
 
-      * :attr:`scope.adc <.CWNano.adc>`
-      * :attr:`scope.io <.CWNano.io>`
-      * :attr:`scope.glitch <.CWNano.glitch>`
+      * :attr:`scope.adc <chipwhisperer.capture.scopes.cwnano.ADCSettings>`
+      * :attr:`scope.io <chipwhisperer.capture.scopes.cwnano.GPIOSettings>`
+      * :attr:`scope.glitch <chipwhisperer.capture.scopes.cwnano.GlitchSettings>`
       * :meth:`scope.default_setup <.CWNano.default_setup>`
       * :meth:`scope.con <.CWNano.con>`
       * :meth:`scope.dis <.CWNano.dis>`
       * :meth:`scope.get_last_trace <.CWNano.get_last_trace>`
       * :meth:`scope.arm <.CWNano.arm>`
       * :meth:`scope.capture <.CWNano.capture>`
-      * :meth:`scope.get_serial_ports <.CWNano.get_serial_ports>`
+      * :meth:`scope.get_serial_ports <chipwhisperer.capture.api.cwcommon.ChipWhispererCommonInterface.get_serial_ports>`
+
+    Inherits from :class:`chipwhisperer.capture.api.cwcommon.ChipWhispererCommonInterface`
     """
 
     _name = "ChipWhisperer Nano"
@@ -576,6 +564,7 @@ class CWNano(util.DisableNewAttr, ChipWhispererCommonInterface):
         self.io = GPIOSettings(self._cwusb)
         self.adc = ADCSettings(self._cwusb)
         self.glitch = GlitchSettings(self._cwusb)
+        self.errors = ChipWhispererSAMErrors(self._getNAEUSB())
         self._timeout = 2
 
         self._lasttrace = None
@@ -585,8 +574,8 @@ class CWNano(util.DisableNewAttr, ChipWhispererCommonInterface):
         self.disable_newattr()
 
     def _getFWPy(self):
-        from ...hardware.firmware.cwnano import fwver
-        return fwver
+        from ...hardware.firmware.open_fw import fwver
+        return fwver("cwnano")
 
     def default_setup(self):
         """ Sets up sane capture defaults for this scope
@@ -608,14 +597,45 @@ class CWNano(util.DisableNewAttr, ChipWhispererCommonInterface):
         self.io.tio2 = "serial_tx"
         self.glitch.repeat = 0
 
+    def glitch_disable(self):
+        self.glitch.repeat = 0
+        self.glitch.ext_offset = 0
+
+    def vglitch_setup(self, glitcht=None, default_setup=True):
+        """Sets up sane defaults for voltage glitch
+
+        repeat = 1
+        ext_offset = 0
+        """
+        if default_setup:
+            self.default_setup()
+
+        self.glitch.repeat = 1
+        self.glitch.ext_offset = 0
+
     def getCurrentScope(self):
         return self
+
+    def _get_usart(self) -> USART:
+        return self.usart
 
     def _getNAEUSB(self):
         return self._cwusb
 
     def _getCWType(self):
         return 'cwnano'
+
+    def reset_clock_phase(self):
+        """Resets the target and adc clocks, resetting their phase
+
+        .. warning:: causes an interruption in the target clock. You may need to reset the target.
+        """
+        if self.check_feature("NANO_CLOCK_RESET"):
+            tfreq = self.io.clkout
+            afreq = self.adc.clk_freq
+            self._getNAEUSB().sendCtrl(0x22, 0xF0)
+            self.io.clkout = tfreq
+            self.adc.clk_freq = afreq
 
     def con(self, sn=None, **kwargs):
         """Connects to attached chipwhisperer hardware (Nano)
@@ -627,6 +647,7 @@ class CWNano(util.DisableNewAttr, ChipWhispererCommonInterface):
         Returns:
             True if connection is successful, False otherwise.
         """
+        self._read_only_attrs = []
         try:
             # possible_sn = self._cwusb.get_possible_devices(idProduct=[0xACE0])
             # serial_numbers = []
@@ -637,10 +658,14 @@ class CWNano(util.DisableNewAttr, ChipWhispererCommonInterface):
             #         raise Warning("Multiple ChipWhisperers detected. Please specify device from the following list using cw.scope(sn=<SN>): \n{}".format(serial_numbers))
             # else:
             #     sn = None
+            if "idProduct" in kwargs:
+                del kwargs['idProduct']
             found_id = self._cwusb.con(idProduct=[0xACE0], serial_number=sn, **kwargs)
         except (IOError, ValueError) as e:
             raise Warning("Could not connect to cwnano. It may have been disconnected,\
 is in an error state, or is being used by another tool.") from e
+        module_list = [x for x in self.__dict__ if isinstance(self.__dict__[x], util.DisableNewAttr)]
+        self.add_read_only(module_list)
         self.disable_newattr()
         self._is_connected = True
         self.connectStatus=True
@@ -652,6 +677,7 @@ is in an error state, or is being used by another tool.") from e
         Returns:
             True if the disconnection was successful, False otherwise.
         """
+        self._read_only_attrs = []
         self.usbdev().close()
         self._is_connected = False
         return True
@@ -734,6 +760,7 @@ is in an error state, or is being used by another tool.") from e
         rtn['io']    = self.io._dict_repr()
         rtn['adc']   = self.adc._dict_repr()
         rtn['glitch'] = self.glitch._dict_repr()
+        rtn['errors'] = self.errors._dict_repr()
         return rtn
 
     def __repr__(self):
@@ -753,3 +780,9 @@ is in an error state, or is being used by another tool.") from e
 
     def usbdev(self):
         return self._cwusb
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.dis()

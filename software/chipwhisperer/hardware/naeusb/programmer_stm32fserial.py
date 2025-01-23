@@ -191,7 +191,7 @@ class STM32FSerial:
         return chip_id, None
 
     @close_on_fail
-    def program(self, filename, memtype="flash", verify=True, logfunc=print_fun, waitfunc=None):
+    def program(self, filename, memtype="flash", verify=True, logfunc=print_fun, waitfunc=None, send_chunk=None):
         """Programs memory type, dealing with opening filename as either .hex or .bin file"""
         self.lastFlashedFile = filename
 
@@ -200,12 +200,19 @@ class STM32FSerial:
         fsize = f.maxaddr() - f.minaddr()
         fdata = f.tobinarray(start=f.minaddr())
         startaddr = f.minaddr()
+        if isinstance(self._chip, STM32F03xx4) and (fsize > 16384):
+            target_logger.error("Your STM32F0 has a max of 0x4000 flash, but this firmware is 0x{:04X}. Firmware/programming may not work!".format(fsize))
 
         logfunc("Attempting to program %d bytes at 0x%x"% (fsize, startaddr))
 
         logfunc("STM32F Programming %s..." % memtype)
         if waitfunc: waitfunc()
-        self.writeMemory(startaddr, fdata)  # , erasePage=True
+        try:
+            self.writeMemory(startaddr, fdata, send_chunk)  # , erasePage=True
+        except CmdException:
+            logfunc("Error during program. Retrying with 1 byte chunks...")
+            self.cmdEraseMemory()
+            self.writeMemory(startaddr, fdata, 1)  # , erasePage=True
         #self.write_verify(startaddr, fdata)
 
         logfunc("STM32F Reading %s..." % memtype)
@@ -215,6 +222,7 @@ class STM32FSerial:
             self.verifyMemory(startaddr, fdata, self.small_blocks)
         except CmdException:
             logfunc("Error during verify. Retrying with small blocks...")
+            # self.cmdEraseMemory()
             self.verifyMemory(startaddr, fdata, True)
 
         logfunc("Verified %s OK, %d bytes" % (memtype, fsize))
@@ -278,12 +286,7 @@ class STM32FSerial:
 
     @close_on_fail
     def reset(self):
-        if self._cwapi:
-            self._cwapi.setParameter(['CW Extra Settings', 'Target IOn GPIO Mode', 'nRST: GPIO', 'Low'])
-            self.delay_func(10)
-            self._cwapi.setParameter(['CW Extra Settings', 'Target IOn GPIO Mode', 'nRST: GPIO', 'High'])
-            self.delay_func(25)
-        elif self.scope:
+        if self.scope:
             self.scope.io.nrst = 'low'
             time.sleep(0.010)
             self.scope.io.nrst = 'high'
@@ -294,16 +297,12 @@ class STM32FSerial:
     @close_on_fail
     def set_boot(self, enter_bootloader):
         if enter_bootloader:
-            if self._cwapi:
-                self._cwapi.setParameter(['CW Extra Settings', 'Target IOn GPIO Mode', 'PDIC: GPIO', 'High'])
-            elif self.scope:
+            if self.scope:
                 self.scope.io.pdic = 'high'
             else:
                 raise ValueError('requires either scope or api to be set')
         else:
-            if self._cwapi:
-                self._cwapi.setParameter(['CW Extra Settings', 'Target IOn GPIO Mode', 'PDIC: GPIO', 'Low'])
-            elif self.scope:
+            if self.scope:
                 self.scope.io.pdic = 'low'
             else:
                 raise ValueError('requires either scope or api to be set')
@@ -332,18 +331,20 @@ class STM32FSerial:
     @close_on_fail
     def initChip(self):
         self.set_boot(True)
-        self.reset()
+        # self.reset()
+        time.sleep(1)
         fails = 0
         while fails < 5:
             try:
                 #First 2-times, try resetting. After that don't in case reset is causing garbage on lines.
                 if fails < 2:
                     self.reset()
+                    time.sleep(1)
                 try:
                     self.sp.flush()
                     self.sp.write("\x7F")
-                except AttributeError:
-                    raise AttributeError('sp attribute requires call to open_port')
+                except AttributeError as e:
+                    raise AttributeError('sp attribute requires call to open_port') from e
                 return self._wait_for_ask("Syncro")
             except CmdException:
                 target_logger.info("Sync failed with error %s, retrying..." % traceback.format_exc())
@@ -358,15 +359,16 @@ class STM32FSerial:
         self.reset()
 
     def cmdGeneric(self, cmd):
-        self.sp.write(chr(cmd))
-        self.sp.write(chr(cmd ^ 0xFF))  # Control byte
+        self.sp.write([cmd, cmd^0xFF])
+        # self.sp.write(chr(cmd))
+        # self.sp.write(chr(cmd ^ 0xFF))  # Control byte
         return self._wait_for_ask(hex(cmd))
 
     def cmdGet(self):
         if self.cmdGeneric(0x00):
             target_logger.info("*** Get command");
-            length = self.sp.read(1)[0]
-            version = self.sp.read(1)[0]
+            length, version = self.sp.read(2)
+            # version = self.sp.read(1)[0]
             target_logger.info("    Bootloader version: " + hex(version))
             #dat = map(lambda c: hex(self.sp.read(len))
             dat = list(map(hex, self.sp.read(length)))
@@ -429,25 +431,35 @@ class STM32FSerial:
         else:
             raise CmdException("Go (0x21) failed")
 
-    def cmdWriteMemory(self, addr, data):
+    def cmdWriteMemory(self, addr, data, block_size=None):
         padding = len(data) & 3
         if padding:
             data += [0xff, 0xff, 0xff, 0xff][padding:]
-        assert (0 < len(data) <= 256)
+
+        assert (0 < len(data) <= 256) # can only write 256 bytes at a time due to len being 1 byte
+
         if self.cmdGeneric(0x31):
             target_logger.debug("*** Write memory command")
             self.sp.write(self._encode_addr(addr))
             self._wait_for_ask("0x31 address failed")
-            # map(lambda c: hex(ord(c)), data)
+
             lng = (len(data) - 1) & 0xFF
             target_logger.debug("    %s bytes to write" % [lng + 1])
+
             self.sp.write(chr(lng))  # len really
             crc = lng
+
             for c in data:
                 crc ^= c
-                self.sp.write(chr(c))
-                if self.slow_speed:
-                    self.delay_func(5)
+
+            if block_size is None:
+                self.sp.write(data)
+            else:
+                # break it into chunks
+                blocks = [data[i:i + block_size] for i in range(len(0, len(data), block_size))]
+                for block in blocks:
+                    self.sp.write(block)
+
             self.sp.write(chr(crc))
             self._wait_for_ask("0x31 programming failed")
             target_logger.debug("    Write memory done")
@@ -481,10 +493,11 @@ class STM32FSerial:
         if self.cmdGeneric(0x44):
             target_logger.debug("*** Extended Erase memory command")
             # Global mass erase
-            self.sp.write(chr(0xFF))
-            self.sp.write(chr(0xFF))
-            # Checksum
-            self.sp.write(chr(0x00))
+            self.sp.write([0xFF, 0xFF, 0x00])
+            # self.sp.write(chr(0xFF))
+            # self.sp.write(chr(0xFF))
+            # # Checksum
+            # self.sp.write(chr(0x00))
             tmp = self.sp.timeout
             if (self._chip.name == STM32F40xxx().name) or (self._chip.name == STM32F2().name):
                 self.sp.timeout = 1000000 #TODO HACK - serial timeout is screwed up for some reason

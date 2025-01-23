@@ -36,6 +36,7 @@ from chipwhisperer.common.utils import util
 from chipwhisperer.common.traces.TraceContainerNative import TraceContainerNative
 import copy
 from chipwhisperer.common.traces import Trace
+from ...logging import *
 import shutil
 
 try:
@@ -668,23 +669,25 @@ class Traces:
     def keys(self):
         return self._keys
 
-    def append(self, trace):
+    def append(self, trace, dtype=np.double):
         """Append a Trace containing the trace and related operation information.
 
         Args:
             trace (:class:`Trace <chipwhisperer.common.trace.Trace>`): A captured or created trace.
+            dtype: Numpy data type for storing trace.wave
 
         Raises:
             TypeError: When trying to append something other than a trace.
         """
         if not isinstance(trace, Trace):
-            raise TypeError("Expected Trace object, got {}.".format(trace))
+            other_logger.error("Invalid type appended to traces. Try appending cw.Trace(trace_data, textin, textout, key)")
+            raise TypeError("Expected Trace object, got {}.".format(type(trace)))
 
         if self.cur_trace_num > self.seg_ind_max:
             self.cur_seg = self.project.segments.new()
             self.project.segments.append(self.cur_seg)
             self.cur_trace_num = 0
-        self.cur_seg.add_trace(*trace)
+        self.cur_seg.add_trace(*trace, dtype=dtype)
         self.cur_trace_num += 1
 
     def extend(self, iterable):

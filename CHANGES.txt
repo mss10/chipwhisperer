@@ -1,7 +1,54 @@
+V5.7.1
+  New Features:
+    * Improve Husky UART triggering
+    * Make use of CW Error LED for serial overruns
+    * Add firmware erase that doesn't require programming FPGA (`quick_firmware_erase()`)
+    * Add CW312 FPGA Target support
+    * Improve `GlitchController.calc()` to exclude params and sort by result
+    * Add `scope.vglitch_reset()`
+    * Add ability to get/set XADC VCC alarm limits
+    * Add firmware erase ability to firmware installer
+
+  Fixes:
+    * Minimize Husky target clock drop when changing ADC clock
+    * Improve STM32F programming speed
+    * Increase reset time for SAM4S, making programming more reliable
+    * Fix issue with long Husky stream captures on Linux
+    * Fix issues with CW305 bitstream build
+    * Remove `caddr_t` from SAM4S/STM32 build (fixes compile on some GCC versions)
+    * Bump OpenOCD version in installer
+
+V5.7.0
+  New Features:
+    * Automatically setup husky_userio pins for MPSSE when `enable_MPSSE()` called
+    * Add SAM4S bootloader support - allows programming SAM4S target boards
+    * Add SAM4S target HAL
+    * Add `openocd/run_openocd.sh` for easier JTAG/SWD programming and debugging
+    * Add `openocd/fe310.cfg` to allow fe310 programming via MPSSE
+    * Common build system for capture boards/cw305/cw310
+    * Add context manager support to ChipWhisperer (thanks @wallento !)
+    * Add `cglitch_setup()`, `vglitch_setup()`, and `glitch_disable()` to scopes for easy glitch setup/disable.
+    * Add `cw.list_devices()` to list attached NewAE devices
+    * Add `scope.reset_clock_phase()` for CWNano
+    * New and improved `GlitchController` with glitch map support
+    * Full Husky support for SCA101 and Fault101
+    * Improve glitch performance on replacement CWNano glitch transistor
+
+  Fixes:
+    * Fix MPSSE timeout on CWPro
+    * Change logger to use temp files (Thanks @S-Vaes !)
+    * Fix `dict_repr` for nano ADC
+    * Fix f3 linkerscript stack location
+    * Correctly set openocd srst signal pin
+    * Identify srst signal as push pull
+    * Add glitch/clock AUX out for Pro
+    * Fix baud rate for simpleserial version not being applied to non simpleserial firmware
+    * Fix FE310 baud rate not being set to 38400bps @ 7.37MHz
+
 V5.6.1
   New Features:
     * ChipWhisperer-Husky and CW310 Bergen Board support
-    * Add `scope.fw_version_str()`
+    * Add `scope.fw_version_str`
     * Switch from pyusb to libusb1 - deprecates libusb0.dll on Windows
     * Add `as_int` parameter to `scope.get_last_trace()` to return traces as integers
     * Add driver detection for Windows
@@ -12,12 +59,17 @@ V5.6.1
     * Add SAM3U firmware feature list and checks
     * Add common interface for USB scopes/targets
     * Add ability to connect to scope via hardware location
+    * Add debugger support (via OpenOCD) to Lite, Pro, Nano, and Husky
+    * Add GUI based Windows firmware installer
+    * Add linting, automatic hardware testing, and firmware building actions
+    * Add FW_CHANGES.txt
 
   Fixes:
     * Fix SS_VER_1_X and XMega simplserial-rsa
     * Fix SSV2 unstuff data for >30 zeros
     * Fix AVR lock bits read
-    * Fix nano connect status
+    * Fix Nano connect status
+    * Fix Nano scope.adc.clk_src not being changeable.
     * Explicit memory ordering in bootloader-glitch
     * Cast analyzer CPA calculations to long double to avoid precision issues in large projects
     * Fix Pro screen getting stuck when capturing
@@ -25,24 +77,22 @@ V5.6.1
     * Fix timeout length on simpleserial reads
     * More versionadded/versionchanged for docs
     * Fix FPGA target.dis()
+    * Fix DCM lock on glitch - caused issues with enable_only glitching (most noticable at high frequencies)
+    * Fix TraceWhisperer verilog files not being installed in user mode
+    * Fix issues with unintended double glitch on CWLite and Pro
+    * Fix simple_PGE when key is numpy array
+    * Don't try calculating pge if known_key not set
+    * No longer overwrite builtins.bytearray
+    * Fix memory numbers in STM32F3 linkerscript
+    * Revert to old NewAE rules
 
   Firmware:
-    * CWLite: 0.52.0
-    * CWNano: 0.52.0
-    * CWPro : 1.52.0
+    * CWLite: 0.62.0
+    * CWNano: 0.62.0
+    * CWPro : 1.62.0
     * CW305 : 0.52.0
-    * CWHusky: 1.0.0
-    * CWBergen: 1.0.0
-    * New Features:
-      * Lite/Pro/Husky external FPGA programming
-      * Variable FPGA programming speed
-      * Firmware now uses generic naeusb firmware
-      * New firmware build date command `sam_build_date()` (scope/target)
-    * Fixes:
-      * CDC settings now works with older CW versions again (pipe error fixed)
-      * XMEGA/AVR programming works on Lite/Pro again (only issue with Black Hat 2021 firmware)
-
-
+    * CWHusky: 1.2.0
+    * CWBergen: 1.2.0
 
 V5.5
   New Features:

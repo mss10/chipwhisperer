@@ -1,9 +1,35 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+#
+# Copyright (c) 2020-2021, NewAE Technology Inc
+# All rights reserved.
+#
+# Find this and more at newae.com - this file is part of the chipwhisperer
+# project, https://github.com/newaetech/chipwhisperer
+#
+#    This file is part of chipwhisperer.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+#=================================================
+
 import time
+
 
 from ._base import TargetTemplate
 from .simpleserial_readers.cwlite import SimpleSerial_ChipWhispererLite
 
-from chipwhisperer.logging import *
+from ...logging import *
+from ...common.utils import util
 class SimpleSerial2_Err:
     OK = 0
     ERR_CMD = 1
@@ -11,6 +37,8 @@ class SimpleSerial2_Err:
     ERR_TIMEOUT = 3
     ERR_LEN = 4
     ERR_FRAME_BYTE = 5
+
+bytearray = util.CWByteArray # type: ignore
 
 
 class SimpleSerial2(TargetTemplate):
@@ -133,6 +161,7 @@ class SimpleSerial2(TargetTemplate):
             if (buf[i] == self._frame_byte):
                 buf[last] = i - last
                 last = i
+                target_logger.debug("Stuffing byte {}".format(i))
         return buf
 
     def _unstuff_data(self, buf):
@@ -147,6 +176,7 @@ class SimpleSerial2(TargetTemplate):
         l = len(buf) - 1
         sentinel = 0
         while n < l:
+            target_logger.debug("Unstuff position {}".format(n))
             tmp = buf[n]
             buf[n] = self._frame_byte
             n += tmp
@@ -162,7 +192,7 @@ class SimpleSerial2(TargetTemplate):
             return n
         return 0x00
 
-    def con(self, scope=None, flush_on_err=True):
+    def con(self, scope=None, flush_on_err=True, **kwargs):
         self.ser.con(scope)
         self._flush_on_err = flush_on_err
         self.reset_comms()
@@ -465,11 +495,11 @@ class SimpleSerial2(TargetTemplate):
         else:
             recv_len = 5 + pay_len #cmd, len, data, crc
         response = self.read(recv_len, timeout=timeout)
-        target_logger.debug("1st read: {}".format(response))
+        target_logger.debug("1st read: {}".format(bytearray(response.encode())))
 
         if response is None or len(response) < recv_len:
             self.flush_on_error()
-            target_logger.warning("Read timed out" + response)
+            target_logger.warning("Read timed out: " + response)
             return None
 
         response = bytearray(response.encode('latin-1'))
@@ -489,7 +519,7 @@ class SimpleSerial2(TargetTemplate):
             # user didn't specify, do second read based on sent length
             target_logger.debug("Length not specified, reading {} bytes (plus CRC and frame byte) based on packet".format(l))
             x = self.read(l+2, timeout=timeout)
-            target_logger.debug("Second read: {}".format(x))
+            target_logger.debug("2nd read: {}".format(bytearray(x.encode())))
             if x is None:
                 target_logger.warning("Read timed out")
                 self.flush_on_error()
@@ -558,6 +588,8 @@ class SimpleSerial2(TargetTemplate):
             scmd (int): The subcommand to use
             data (bytearray): The data to send
         """
+        if type(data) is list:
+            data = bytearray(data)
         if isinstance(cmd, str):
             cmd = ord(cmd[0])
         buf = [0x00, cmd, scmd, len(data)]
@@ -568,7 +600,8 @@ class SimpleSerial2(TargetTemplate):
         buf = self._stuff_data(buf)
         self.write(buf)
         target_logger.debug("Sending: {}".format(bytearray(buf)))
-        target_logger.debug("Unstuffed data: {}".format(bytearray(self._unstuff_data(buf))))
+        self._unstuff_data(buf)
+        target_logger.debug("Unstuffed data: {}".format(bytearray(buf)))
 
     def reset_comms(self):
         """ Try to reset communication with the target and put it in
@@ -578,10 +611,52 @@ class SimpleSerial2(TargetTemplate):
         """
         self.write([0x00]*2) # make sure target not processing a command
         time.sleep(0.05)
-        self.flush()
+        while self.in_waiting() > 0:
+            self.flush()
+            time.sleep(0.05)
 
-    def write(self, data):
-        self.ser.write(data)
+    def write(self, data, timeout=0):
+        """ Writes data to the target over serial.
+
+        Args:
+            data (str): Data to write over serial.
+            timeout (float or None): Wait <timeout> seconds for write buffer to clear.
+                If None, block for a long time. If 0, return immediately. Defaults to 0.
+
+        Raises:
+            Warning: Target not connected
+        """
+        if type(data) is list:
+            data = bytearray(data)
+        self.ser.write(data, timeout)
+
+    @property
+    def parity(self):
+        if hasattr(self.ser, 'parity') and callable(self.ser.parity):
+            return self.ser.parity()
+        else:
+            raise AttributeError("Can't access parity")
+
+    @parity.setter
+    def parity(self, parity):
+        if hasattr(self.ser, 'parity') and callable(self.ser.parity):
+            return self.ser.setParity(parity)
+        else:
+            raise AttributeError("Can't access parity")
+
+    @property
+    def stop_bits(self):
+        if hasattr(self.ser, 'stopBits') and callable(self.ser.stopBits):
+            return self.ser.stopBits()
+        else:
+            raise AttributeError("Can't access parity")
+
+    @stop_bits.setter
+    def stop_bits(self, stop_bits):
+        if hasattr(self.ser, 'stopBits') and callable(self.ser.stopBits):
+            return self.ser.setStopBits(stop_bits)
+        else:
+            raise AttributeError("Can't access parity")
 
     @property
     def baud(self):
@@ -608,7 +683,7 @@ class SimpleSerial2(TargetTemplate):
             raise AttributeError("Can't access baud rate")
 
 
-    def set_key(self, key, ack=True, timeout=250):
+    def set_key(self, key, ack=True, timeout=250, always_send=False):
         """Checks if key is different than the last one sent. If so, send it.
 
         Uses simpleserial_write('k')
@@ -623,7 +698,7 @@ class SimpleSerial2(TargetTemplate):
         Raises:
             Warning: Device did not ack or error during read.
         """
-        if self.last_key != key:
+        if (self.last_key != key) or always_send:
             self.reset_comms()
             self.last_key = key
             self.simpleserial_write('k', key)
@@ -658,6 +733,42 @@ class SimpleSerial2(TargetTemplate):
         """
         return self.ser.inWaitingTX()
 
+    @property
+    def xonxoff(self):
+        # TODO: check version to make sure fw has this
+        return self.ser.xonxoff
+    
+    @xonxoff.setter
+    def xonxoff(self, enable):
+        self.ser.xonxoff = enable
+
+    @property
+    def currently_xoff(self):
+        return self.ser.currently_xoff
+
+    def __repr__(self):
+        ret = "SimpleSerial Settings ="
+        for line in dict_to_str(self._dict_repr()).split("\n"):
+            ret += "\n\t" + line
+        return ret
+
+    def __str__(self):
+        return self.__repr__()
+
+    def _dict_repr(self):
+        rtn = OrderedDict()
+        rtn['output_len'] = self.output_len
+
+        rtn['baud']     = self.baud
+        rtn['simpleserial_last_read'] = self.simpleserial_last_read
+        rtn['simpleserial_last_sent'] = self.simpleserial_last_sent
+        rtn['xonxoff'] = self.xonxoff
+        rtn['currently_xoff'] = self.currently_xoff
+        rtn['parity'] = self.parity
+        rtn['stop_bits'] = self.stop_bits
+        #rtn['protver'] = self.protver
+        return rtn
+
 class SimpleSerial2_CDC(SimpleSerial2):
     """Target Option for Using SSV2 with a CDC Port
 
@@ -687,7 +798,7 @@ class SimpleSerial2_CDC(SimpleSerial2):
         self.ser = None
 
     def close(self):
-        self.ser.dis()
+        self.ser.close()
 
     def con(self, scope, dev_path=None, interface=None, flush_on_err=True):
         import serial # type: ignore

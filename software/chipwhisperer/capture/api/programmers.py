@@ -1,47 +1,37 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright (c) 2014, NewAE Technology Inc
+# Copyright (c) 2014-2022, NewAE Technology Inc
 # All rights reserved.
 #
-# Authors: Colin O'Flynn
 #
 # Find this and more at newae.com - this file is part of the chipwhisperer
-# project, http://www.assembla.com/spaces/chipwhisperer
+# project, http://www.chipwhisperer.com 
 #
-#    This file is part of chipwhisperer.
-#
-#    chipwhisperer is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    chipwhisperer is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Lesser General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with chipwhisperer.  If not, see <http://www.gnu.org/licenses/>.
 #=================================================
 import logging
 from chipwhisperer.common.utils import util
 from ..scopes import ScopeTypes
+from ..scopes import CWNano
+from .cwcommon import ChipWhispererCommonInterface
 from chipwhisperer.hardware.naeusb.programmer_avr import supported_avr
 from chipwhisperer.hardware.naeusb.programmer_xmega import supported_xmega
 from chipwhisperer.hardware.naeusb.programmer_stm32fserial import supported_stm32f
+from chipwhisperer.hardware.naeusb.programmer_neorv32 import Neorv32Programmer
+import time
+from ..utils.IntelHex import IntelHex
 
 from functools import wraps
 
 from chipwhisperer.logging import *
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 
 
 class Programmer:
     lastFlashedFile = "unknown"
     _scope : Optional[ScopeTypes] = None
-    # pin_setup = {}
+    pin_setup : Dict[str, str] = {}
 
     def __init__(self):
         self.newTextLog = util.Signal()
@@ -113,36 +103,159 @@ def save_and_restore_pins(func):
         if self.scope is None:
             return func(self, *args, **kwargs)
 
-        pin_setup : Dict[str, str]= {
-            'pdic': self.scope.io.pdic,
-            'pdid': self.scope.io.pdid,
-            'nrst': self.scope.io.nrst,
-        }
-        target_logger.debug('Saving pdic, pdid, and nrst pin configuration')
+        pin_setup = [
+            'pdic',
+            'pdid',
+            'nrst',
+            'tio3'
+        ]
+        target_logger.debug('Saving {} pin configuration'.format(pin_setup))
         # setup the pins so that so communication to the target is possible
         # Important: during the execution of func, the pin values may change if
         # the function is related to reprogramming or resetting the device. Example:
         # the stm32f uses the toggling of the nrst and pdic pins for resetting
         # and boot mode setting respectively
-        target_logger.debug('Changing pdic, pdid, and nrst pin configuration')
-        if pin_setup['pdic'] != 'high_z':
-            self.scope.io.pdic = 'high_z'
-        if pin_setup['pdid'] != 'high_z':
-            self.scope.io.pdid = 'high_z'
-        if pin_setup['nrst'] != 'high_z':
-            self.scope.io.nrst = 'high_z'
+        pin_states = []
+        for pin in pin_setup:
+            state = getattr(self.scope.io, pin)
+            target_logger.debug('{} was {}'.format(pin, state))
+            pin_states.append(state)
+            if state != 'high_z':
+                setattr(self.scope.io, pin, 'high_z')
+
+        target_logger.debug('Changing {} pin configuration'.format(pin_setup))
+
         try:
             val = func(self, *args, **kwargs)
         finally:
-            target_logger.debug('Restoring pdic, pdid, and nrst pin configuration')
-            if self.scope.io.pdic != pin_setup['pdic']:
-                self.scope.io.pdic = pin_setup['pdic']
-            if self.scope.io.pdid != pin_setup['pdid']:
-                self.scope.io.pdid = pin_setup['pdid']
-            if self.scope.io.nrst != pin_setup['nrst']:
-                self.scope.io.nrst = pin_setup['nrst']
+            target_logger.debug('Restoring {} pin configuration'.format(pin_setup))
+            for i, pin in enumerate(pin_setup):
+                target_logger.debug('{} setting to {}'.format(pin, pin_states[i]))
+                if getattr(self.scope.io, pin) != pin_states[i]:
+                    setattr(self.scope.io, pin, pin_states[i])
         return val # only returns value when decorating a function with return value
     return func_wrapper
+
+from ...hardware.naeusb.bootloader_sam3u import Samba
+class SAM4SProgrammer(Programmer):
+    def __init__(self, erase_pin='pdic'):
+        super().__init__()
+        if not erase_pin in ['pdic', 'tio3']:
+            raise ValueError("Invalid erase pin {} must be pdic or tio3".format(erase_pin))
+        self.erase_pin = erase_pin
+        self.prog = None
+        self.scope : ScopeTypes = None
+
+    def get_prog(self):
+        if self.prog is None:
+            if self.scope is None:
+                raise OSError("Assign prog.scope before attempting programming")
+            self.prog = Samba()
+        return self.prog
+
+    @save_and_restore_pins
+    def find(self, power_cycle=True):
+        if power_cycle:
+            # target_logger.info("Power cycling SAM4S")
+            # self.scope.io.target_pwr = 0
+            # time.sleep(0.2)
+            # self.scope.io.target_pwr = 1
+            # time.sleep(0.2)
+            pass
+        target_logger.info("Toggling erase({})/nrst pins".format(self.erase_pin))
+
+        if (self.scope.io.tio1, self.scope.io.tio2) != ("serial_rx", "serial_tx"):
+            target_logger.warning("Serial pins incorrect for NewAE SAM4S target") 
+            target_logger.warning("(tio1, tio2) != ('serial_rx', 'serial_tx')")
+            target_logger.warning("Did you forget to call scope.default_setup()?")
+
+        setattr(self.scope.io, self.erase_pin, 1)
+        time.sleep(0.5)
+        setattr(self.scope.io, self.erase_pin, None)
+        time.sleep(0.5)
+
+        self.scope.io.nrst = 0
+        time.sleep(0.5)
+        self.scope.io.nrst = None
+        time.sleep(0.5)
+
+        self._old_baud = self.scope._get_usart()._baud
+        prog = self.get_prog()
+        target_logger.info("Connecting to SAMBA")
+        prog.con(self.scope)
+        target_logger.info("Done!")
+
+    @save_and_restore_pins
+    def erase(self):
+        target_logger.info("Erasing firmware")
+        prog = self.get_prog()
+        prog.erase()
+        target_logger.info("Done!")
+
+    @save_and_restore_pins
+    def program(self, filename : str, memtype="flash", verify=True):
+        prog = self.get_prog()
+        target_logger.info("Opening firmware...")
+
+        if filename.endswith(".hex"):
+            f = IntelHex(filename)
+            fw_data = f.tobinarray(start=f.minaddr())
+        else:
+            fw_data = open(filename, "rb").read()
+        
+        target_logger.info("Programming...")
+        prog.write(fw_data)
+        target_logger.info("Verifying...")
+        if prog.verify(fw_data):
+            # prog.reset()
+            target_logger.info("Verify OK, resetting target...")
+            prog.flash.setBootFlash(1)
+            if not prog.flash.getBootFlash():
+                target_logger.warning("Boot flash not set, target may require power cycle")
+            prog.reset()
+            prog.ser.close()
+            return True
+        else:
+            target_logger.error("Verify FAILED!")
+            prog.ser.close()
+            raise OSError("Verify FAILED")
+
+    def close(self, reset=True):
+        self.scope._get_usart().init(self._old_baud)
+        self.scope.io.nrst = 0
+        time.sleep(0.2)
+        self.scope.io.nrst = None
+        time.sleep(0.2)
+        pass
+        
+    
+        
+
+class NEORV32Programmer(Programmer):
+
+    @save_and_restore_pins
+    def find(self):
+        if self.scope is None:
+            raise ValueError("Programmer not yet setup")
+
+        self.neorv = Neorv32Programmer(self.scope)
+        self.neorv.open_port()
+        pass
+
+    @save_and_restore_pins
+    def erase(self):
+        pass
+
+    @save_and_restore_pins
+    def program(self, filename: str, memtype="flash", verify=True):
+        self.neorv.program(filename)
+        pass
+
+    def close(self):
+        self.neorv.close_port()
+    
+class iCE40Programmer(Programmer):
+    pass
 
 class AVRProgrammer(Programmer):
     def __init__(self, slow_clock = False):
@@ -298,6 +411,12 @@ class STM32FProgrammer(Programmer):
     def find(self):
         stm32f = self.stm32prog()
         stm32f.scope = self.scope
+        # only check this for non-Nano, as Nano can't adjust these pins
+        if not type(self.scope) is CWNano:
+            if (self.scope.io.tio1, self.scope.io.tio2) != ("serial_rx", "serial_tx"):
+                target_logger.warning("Serial pins incorrect for NewAE STM32 target") 
+                target_logger.warning("(tio1, tio2) != ('serial_rx', 'serial_tx')")
+                target_logger.warning("Did you forget to call scope.default_setup()?")
         sig, chip = stm32f.find()
 
         # logging is done at the lower level
